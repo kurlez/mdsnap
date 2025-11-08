@@ -1,12 +1,18 @@
-# 示例文章标题
+---
+title: Sample Document
+author: GPT Assistant
+---
 
-这是一个用于测试脚本的示例段落。我们将把这个段落转换成适合手机阅读的竖版图片卡片。
+# Markdown to Image Test
 
-## 小节一
+This is a sample document to verify md_to_cards.py.
 
-在第一张卡片里，我们希望看到大约两百五十字左右的内容。这样读者在手机屏幕上滚动时就不会觉得信息过多。
+- Point 1: the script can read the file.
+- Point 2: the script splits text into pages.
+- Point 3: the script saves images into output_cards.
 
-## 小节二
+---
 
-第二张卡片继续展示内容，并确保字体、颜色以及背景的搭配舒适。为了测试换行，我们在这里添加更多文字。这个工具应该能够自动根据屏幕宽度调整文字换行，避免超出边界，同时保持良好的阅读体验。
+Second page content to test manual page breaks using ---.
 
+Thank you.
