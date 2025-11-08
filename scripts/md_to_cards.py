@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import os
 import re
 from pathlib import Path
-from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageStat
+from PIL import Image, ImageDraw, ImageFont, ImageStat, UnidentifiedImageError
 
 
 DEFAULT_CANVAS = (1080, 1920)
@@ -46,6 +47,13 @@ COLOR_ALIASES = {
     "softgold": "#f5d59a",
     "soft-gold": "#f5d59a",
 }
+IMAGE_PLACEHOLDER_TEMPLATE = "[[MDIMG:{index}]]"
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"^\[\[MDIMG:(\d+)\]\]$")
+WIKILINK_IMAGE_PATTERN = re.compile(r"!?\[\[([^\]|]+?)(?:\|(\d+))?\]\]")
+REFERENCED_IMAGE_PATTERN = re.compile(
+    r"\[([^\]]+)\]\[\s*([^\]\r\n]+?)\s*[\]\】]"
+)
+IMAGE_TARGET_WIDTH = 200
 METADATA_PREFIXES = (
     "title",
     "source",
@@ -278,15 +286,50 @@ def load_font(
     )
 
 
-def markdown_to_plain_text(markdown: str) -> str:
+def markdown_to_plain_text(markdown: str) -> Tuple[str, Dict[str, Dict[str, str]]]:
     text = strip_metadata_and_ads(markdown)
+
+    image_refs: Dict[str, Dict[str, str]] = {}
+
+    def replace_image(match: re.Match[str]) -> str:
+        alt_text = match.group(1).strip()
+        src = match.group(2).strip()
+        if src.startswith("!"):
+            src = src[1:]
+        placeholder = IMAGE_PLACEHOLDER_TEMPLATE.format(index=len(image_refs))
+        image_refs[placeholder] = {"src": src, "alt": alt_text}
+        return f"\n{placeholder}\n"
+
+    text = re.sub(r"!\[([^\]]*)\]\(([^\)]+)\)", replace_image, text)
+
+    def replace_reference_image(match: re.Match[str]) -> str:
+        alt_text = match.group(1).strip()
+        src = match.group(2).strip()
+        src = src.rstrip("】").strip()
+        if not re.match(r"^https?://", src, flags=re.IGNORECASE):
+            return match.group(0)
+        if src.startswith("!"):
+            src = src[1:].strip()
+        placeholder = IMAGE_PLACEHOLDER_TEMPLATE.format(index=len(image_refs))
+        image_refs[placeholder] = {"src": src, "alt": alt_text}
+        return f"\n{placeholder}\n"
+
+    text = REFERENCED_IMAGE_PATTERN.sub(replace_reference_image, text)
+
+    def replace_wikilink(match: re.Match[str]) -> str:
+        filename = match.group(1).strip()
+        width = match.group(2).strip() if match.group(2) else ""
+        placeholder = IMAGE_PLACEHOLDER_TEMPLATE.format(index=len(image_refs))
+        src = f"attachments/{filename}"
+        image_refs[placeholder] = {"src": src, "alt": filename, "width": width}
+        return f"\n{placeholder}\n"
+
+    text = WIKILINK_IMAGE_PATTERN.sub(replace_wikilink, text)
 
     # Remove fenced code blocks.
     text = re.sub(r"```[\s\S]*?```", "", text)
     # Remove inline code markers.
     text = re.sub(r"`([^`]*)`", r"\1", text)
-    # Convert images to their alt text.
-    text = re.sub(r"!\[([^\]]*)\]\([^\)]*\)", r"\1", text)
     # Convert links to their visible text.
     text = re.sub(r"\[([^\]]+)\]\([^\)]*\)", r"\1", text)
     # Strip heading markers.
@@ -305,7 +348,7 @@ def markdown_to_plain_text(markdown: str) -> str:
     # Strip trailing spaces.
     text = re.sub(r"[ \t]+\n", "\n", text)
 
-    return text.strip()
+    return text.strip(), image_refs
 
 
 def strip_metadata_and_ads(raw_markdown: str) -> str:
@@ -466,6 +509,72 @@ def determine_text_color(
     return (0, 0, 0) if avg_luminance > 170 else (255, 255, 255)
 
 
+def _resize_to_width(image: Image.Image, target_width: int) -> Image.Image:
+    if target_width <= 0 or image.width <= target_width:
+        return image
+    ratio = target_width / float(image.width)
+    new_height = max(1, int(image.height * ratio))
+    return image.resize((target_width, new_height), Image.LANCZOS)
+
+
+def _load_image_from_source(src: str, base_dir: Path) -> Optional[Image.Image]:
+    if re.match(r"^https?://", src, flags=re.IGNORECASE):
+        response = requests.get(src, timeout=30)
+        response.raise_for_status()
+        return Image.open(io.BytesIO(response.content)).convert("RGB")
+
+    candidate = Path(src)
+    if not candidate.is_absolute():
+        candidate = (base_dir / candidate).resolve()
+    if not candidate.exists():
+        return None
+    return Image.open(candidate).convert("RGB")
+
+
+def load_image_assets(
+    image_refs: Dict[str, Dict[str, str]],
+    base_dir: Path,
+    debug: bool = False,
+) -> Dict[str, Dict[str, object]]:
+    assets: Dict[str, Dict[str, object]] = {}
+    for placeholder, meta in image_refs.items():
+        src = meta.get("src", "").strip()
+        if src.startswith("!"):
+            src = src[1:].strip()
+        alt = meta.get("alt", "").strip()
+        width_hint = meta.get("width", "").strip()
+        image: Optional[Image.Image] = None
+        if src:
+            try:
+                image = _load_image_from_source(src, base_dir)
+                if image:
+                    target_width = IMAGE_TARGET_WIDTH
+                    if width_hint:
+                        try:
+                            width_value = int(width_hint)
+                            if width_value > 0:
+                                target_width = width_value
+                        except ValueError:
+                            if debug:
+                                print(
+                                    f"[DEBUG] Invalid width hint '{width_hint}' for {placeholder}"
+                                )
+                    image = _resize_to_width(image, target_width)
+            except (requests.RequestException, UnidentifiedImageError, OSError) as exc:
+                if debug:
+                    print(f"[DEBUG] Failed to load image '{src}': {exc}")
+                image = None
+        else:
+            if debug:
+                print(f"[DEBUG] Missing source for image placeholder {placeholder}")
+        assets[placeholder] = {
+            "image": image,
+            "alt": alt if alt else "[图片]",
+            "source": src,
+        }
+    return assets
+
+
 def prepare_canvas(
     width: int, height: int, background_spec: str
 ) -> Tuple[Image.Image, Tuple[int, int, int]]:
@@ -499,6 +608,10 @@ def wrap_lines(
     lines: List[str] = []
     for paragraph in text.split("\n"):
         paragraph = paragraph.rstrip("\r")
+        placeholder_candidate = paragraph.strip()
+        if IMAGE_PLACEHOLDER_PATTERN.fullmatch(placeholder_candidate):
+            lines.append(placeholder_candidate)
+            continue
         if not paragraph:
             lines.append("")
             continue
@@ -539,6 +652,7 @@ def render_card(
     page_index: int,
     total_pages: int,
     debug: bool = False,
+    image_assets: Optional[Dict[str, Dict[str, object]]] = None,
 ) -> Image.Image:
     width, height = canvas_size
     canvas, auto_color = prepare_canvas(width, height, background_spec)
@@ -570,7 +684,23 @@ def render_card(
     def measure(font_obj: ImageFont.ImageFont) -> Tuple[List[str], int, int]:
         wrapped = wrap_lines(draw, chunk, font_obj, text_area_width)
         line_ht = _font_line_height(font_obj, line_spacing_multiplier)
-        return wrapped, line_ht, len(wrapped) * line_ht
+        total_height = 0
+        for line in wrapped:
+            stripped = line.strip()
+            if (
+                image_assets
+                and stripped in image_assets
+                and IMAGE_PLACEHOLDER_PATTERN.match(stripped)
+            ):
+                image_info = image_assets[stripped]
+                image = image_info.get("image")
+                if image is None:
+                    total_height += line_ht
+                else:
+                    total_height += image.height + line_ht
+            else:
+                total_height += line_ht
+        return wrapped, line_ht, total_height
 
     lines, line_height, text_block_height = measure(active_font)
 
@@ -600,8 +730,51 @@ def render_card(
         if not line:
             y += line_height
             continue
-        draw.text((margin, y), line, font=active_font, fill=text_color)
-        y += line_height
+        stripped = line.strip()
+        if (
+            image_assets
+            and stripped in image_assets
+            and IMAGE_PLACEHOLDER_PATTERN.match(stripped)
+        ):
+            image_info = image_assets[stripped]
+            image = image_info.get("image")
+            alt_text = image_info.get("alt") or "[图片]"
+            if image is None:
+                draw.text((margin, y), alt_text, font=active_font, fill=text_color)
+                y += line_height
+                continue
+            img_width, img_height = image.size
+            if img_width > text_area_width:
+                ratio = text_area_width / float(img_width)
+                new_width = int(img_width * ratio)
+                new_height = int(img_height * ratio)
+                image = image.resize((new_width, new_height), Image.LANCZOS)
+                img_width, img_height = image.size
+
+            if y + img_height > height - margin - page_height - page_spacing:
+                available = height - margin - page_height - page_spacing - y
+                if available > 10:
+                    ratio = available / float(img_height)
+                    new_width = max(1, int(img_width * ratio))
+                    new_height = max(1, int(img_height * ratio))
+                    image = image.resize((new_width, new_height), Image.LANCZOS)
+                    img_width, img_height = image.size
+                else:
+                    draw.text(
+                        (margin, y),
+                        alt_text,
+                        font=active_font,
+                        fill=text_color,
+                    )
+                    y += line_height
+                    continue
+
+            x = margin + (text_area_width - img_width) // 2
+            canvas.paste(image, (x, y))
+            y += img_height + line_height
+        else:
+            draw.text((margin, y), line, font=active_font, fill=text_color)
+            y += line_height
 
     if hasattr(base_font, "font_variant"):
         page_number_font = base_font.font_variant(
@@ -640,7 +813,7 @@ def build_target_directory(base_dir: Path, source_markdown: Path) -> Path:
 
 def generate_cards(args: argparse.Namespace) -> List[Path]:
     markdown_text = args.markdown_path.read_text(encoding="utf-8")
-    plain_text = markdown_to_plain_text(markdown_text)
+    plain_text, image_refs = markdown_to_plain_text(markdown_text)
     chunks = chunk_text(plain_text, args.chars_per_card)
 
     if args.debug:
@@ -650,6 +823,9 @@ def generate_cards(args: argparse.Namespace) -> List[Path]:
         raise ValueError("No text content found after parsing markdown.")
 
     font = load_font(args.font, args.font_size, args.font_index, debug=args.debug)
+    image_assets = load_image_assets(
+        image_refs, base_dir=args.markdown_path.parent, debug=args.debug
+    )
     output_root = Path(args.output_dir)
     target_directory = build_target_directory(output_root, args.markdown_path)
     ensure_output_dir(target_directory)
@@ -669,6 +845,7 @@ def generate_cards(args: argparse.Namespace) -> List[Path]:
             page_index=idx,
             total_pages=total_pages,
             debug=args.debug,
+            image_assets=image_assets,
         )
         output_path = target_directory / f"card_{idx:03}.png"
         card.save(output_path)
