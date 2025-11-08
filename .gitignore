@@ -1,0 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.Renviron
+*.RProj
+LICENCE
+db-env.sh
+output_cards/
+output_cards_test/
+__pycache__/
+*.pyc
