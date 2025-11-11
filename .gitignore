@@ -8,8 +8,8 @@ LICENCE
 db-env.sh
 output_cards/
 output_cards_test/
+output_pdfs/
 __pycache__/
 *.pyc
-*。pdf
-output_pdfs/
+*.pdf
 .DS_Store
