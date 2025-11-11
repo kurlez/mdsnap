@@ -10,3 +10,6 @@ output_cards/
 output_cards_test/
 __pycache__/
 *.pyc
+*。pdf
+output_pdfs/
+.DS_Store
