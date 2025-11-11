@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from scripts import md_to_cards
+from . import pdf_export
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -12,10 +13,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Convert a Markdown document into mobile-friendly image cards.",
     )
     parser.add_argument(
+        "--mode",
+        choices=("cards", "pdf"),
+        default="cards",
+        help="cards: generate image cards (default); pdf: export markdown files to PDFs.",
+    )
+    parser.add_argument(
         "--input",
-        required=True,
         type=Path,
-        help="Path to the source Markdown file.",
+        help="Path to the source Markdown file (cards mode and single-file PDF export).",
     )
     parser.add_argument(
         "--output-dir",
@@ -86,6 +92,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Enable verbose debug logging.",
     )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        help="Directory containing markdown files (used with --mode=pdf).",
+    )
+    parser.add_argument(
+        "--pdf-output-dir",
+        type=Path,
+        default=pdf_export.DEFAULT_OUTPUT_DIR,
+        help=(
+            "Directory where generated PDFs will be written (pdf mode, default: output_pdfs)."
+        ),
+    )
+    parser.add_argument(
+        "--page-size",
+        type=str,
+        default=pdf_export.DEFAULT_PAGE_SIZE,
+        help=(
+            "PDF page size name (e.g. letter, a4) or custom dimensions WIDTHxHEIGHT in points (default: letter)."
+        ),
+    )
+    parser.add_argument(
+        "--non-recursive",
+        action="store_true",
+        help="Do not search subdirectories when exporting PDFs (pdf mode only).",
+    )
     return parser.parse_args(argv)
 
 
@@ -109,6 +141,40 @@ def _build_legacy_namespace(args: argparse.Namespace) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.mode == "pdf":
+        if args.input and args.input_dir:
+            raise SystemExit("Use either --input for a single file or --input-dir for batch export.")
+        if args.input:
+            generated = [
+                pdf_export.export_file_to_pdf(
+                    input_file=args.input,
+                    output_dir=args.pdf_output_dir,
+                    page_size_spec=args.page_size,
+                    font_path=args.font,
+                    debug=args.debug,
+                )
+            ]
+            output_location = args.pdf_output_dir.resolve()
+            print(f"Generated 1 PDF in {output_location}")
+            return 0
+        if not args.input_dir:
+            raise SystemExit("Provide --input for a single file or --input-dir for batch export.")
+        recursive = not args.non_recursive
+        generated = pdf_export.export_directory_to_pdfs(
+            input_dir=args.input_dir,
+            output_dir=args.pdf_output_dir,
+            page_size_spec=args.page_size,
+            font_path=args.font,
+            recursive=recursive,
+            debug=args.debug,
+        )
+        output_location = args.pdf_output_dir.resolve()
+        print(f"Generated {len(generated)} PDFs in {output_location}")
+        return 0
+
+    if not args.input:
+        raise SystemExit("--input is required when --mode=cards.")
+
     legacy_args = _build_legacy_namespace(args)
     output_files = md_to_cards.generate_cards(legacy_args)
     print(

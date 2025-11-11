@@ -517,17 +517,45 @@ def _resize_to_width(image: Image.Image, target_width: int) -> Image.Image:
     return image.resize((target_width, new_height), Image.LANCZOS)
 
 
-def _load_image_from_source(src: str, base_dir: Path) -> Optional[Image.Image]:
+def _svg_to_png(
+    data: bytes,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    debug: bool = False,
+) -> Image.Image:
+    if svg2png is None:
+        raise RuntimeError(
+            "SVG support requires the 'cairosvg' package. "
+            "Please install it via 'pip install cairosvg'."
+        )
+    png_bytes = svg2png(bytestring=data, output_width=width, output_height=height)
+    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+
+def _load_image_from_source(src: str, base_dir: Path, debug: bool = False) -> Optional[Image.Image]:
     if re.match(r"^https?://", src, flags=re.IGNORECASE):
-        response = requests.get(src, timeout=30)
+        headers = {
+            "User-Agent": "mdsnap/1.0 (+https://github.com/mdsnap)"
+        }
+        response = requests.get(src, timeout=30, headers=headers)
         response.raise_for_status()
-        return Image.open(io.BytesIO(response.content)).convert("RGB")
+        content_type = response.headers.get("Content-Type", "").lower()
+        data = response.content
+        if "svg" in content_type or src.lower().endswith(".svg"):
+            if debug:
+                print(f"[DEBUG] Converting remote SVG {src} to PNG")
+            return _svg_to_png(data, debug=debug)
+        return Image.open(io.BytesIO(data)).convert("RGB")
 
     candidate = Path(src)
     if not candidate.is_absolute():
         candidate = (base_dir / candidate).resolve()
     if not candidate.exists():
         return None
+    if candidate.suffix.lower() == ".svg":
+        if debug:
+            print(f"[DEBUG] Converting local SVG {candidate} to PNG")
+        return _svg_to_png(candidate.read_bytes(), debug=debug)
     return Image.open(candidate).convert("RGB")
 
 
