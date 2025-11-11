@@ -1,0 +1,78 @@
+Metadata-Version: 2.4
+Name: mdsnap
+Version: 0.1.0
+Summary: Convert Markdown notes into image cards or printable PDFs.
+Author: mdsnap contributors
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: pillow>=12.0.0
+Requires-Dist: requests>=2.32.0
+Requires-Dist: reportlab>=4.0.0
+Provides-Extra: svg
+Requires-Dist: cairosvg>=2.7; extra == "svg"
+
+# mdsnap
+
+Convert Markdown content into shareable artifacts.
+
+## Features
+
+- Generate mobile-friendly image cards from a single Markdown file.
+- Export every Markdown note inside a directory (e.g. an Obsidian vault) to individual PDFs.
+- Automatically download and use a CJK-friendly font if none is provided.
+
+## Usage
+
+### Image cards
+
+```bash
+python -m mdsnap --mode cards --input examples/sample.md
+```
+
+This generates PNG cards under `output_cards/`.
+
+### PDF export for Obsidian vaults
+
+```bash
+python -m mdsnap \
+  --mode pdf \
+  --input-dir /path/to/vault \
+  --pdf-output-dir output_pdfs \
+  --page-size letter
+```
+
+- All `.md` files (recursively by default) become PDFs, preserving directory structure.
+- Images referenced in Markdown render inside the PDF. 如果图片宽度超过版芯，会自动缩放到大约 2/3 版宽；小于版芯的图片保持原尺寸。
+- Markdown 标题（`##`、`###` 等）以及有序/无序列表会按结构转成 PDF 里的相应格式。
+- 简单的内联格式（例：`**加粗**`、`==高亮==`、`*斜体*`、`` `code` ``）会自动转换为 PDF 中的对应样式；裸露的 URL 会被缩短显示并保持可点击。
+- 远程图片请求会携带自定义 User-Agent，以提高兼容性（例如 Picsum 等服务）。
+- 如果安装了 `cairosvg`，则会自动把 SVG 图片转成位图再嵌入 PDF；否则以占位文本形式提示。
+- Supported page sizes include `letter`, `a4`, `a5`, `legal`, `tabloid`, or custom dimensions such as `612x792` (width×height in points).
+- Use `--non-recursive` to restrict the export to the top-level directory only.
+
+### Export a single Markdown file to PDF
+
+```bash
+python -m mdsnap \
+  --mode pdf \
+  --input /path/to/note.md \
+  --pdf-output-dir output_pdfs
+```
+
+## Dependencies
+
+Install requirements via:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Installation
+
+To install the CLI from source:
+
+```bash
+pip install .
+```
+
+This registers the `mdsnap` executable which exposes all options documented above.

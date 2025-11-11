@@ -3,8 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from scripts import md_to_cards
-from . import pdf_export
+from scripts import md_to_cards, pdf_export
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

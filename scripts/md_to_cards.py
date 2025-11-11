@@ -177,6 +177,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def _resources_dir() -> Path:
+    packaged = Path(__file__).resolve().parent / "data" / "fonts"
+    if packaged.exists():
+        return packaged
     return Path(__file__).resolve().parent.parent / "resources" / "fonts"
 
 

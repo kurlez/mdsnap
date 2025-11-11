@@ -53,3 +53,13 @@ Install requirements via:
 ```bash
 pip install -r requirements.txt
 ```
+
+## Installation
+
+To install the CLI from source:
+
+```bash
+pip install .
+```
+
+This registers the `mdsnap` executable which exposes all options documented above.

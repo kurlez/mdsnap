@@ -1,0 +1,2 @@
+[console_scripts]
+mdsnap = mdsnap.cli:main
