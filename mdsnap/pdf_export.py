@@ -351,32 +351,46 @@ def _format_url_markup(url: str) -> str:
 
 
 def _normalize_tag_order(text: str) -> str:
-    patterns = [
-        (re.compile(r"<b><i>(.*?)</b></i>", re.DOTALL), "<b><i>{inner}</i></b>"),
-        (re.compile(r"<i><b>(.*?)</i></b>", re.DOTALL), "<i><b>{inner}</b></i>"),
-        (re.compile(r"<b>(.*?)<i>(.*?)</b>", re.DOTALL), "<b>{inner_before}</b><i>{inner_after}</i>"),
-        (re.compile(r"<i>(.*?)<b>(.*?)</i>", re.DOTALL), "<i>{inner_before}</i><b>{inner_after}</b>"),
-        (re.compile(r"<font([^>]*)><b>(.*?)</font></b>", re.DOTALL), "<font{attrs}><b>{inner}</b></font>"),
-        (re.compile(r"<font([^>]*)><i>(.*?)</font></i>", re.DOTALL), "<font{attrs}><i>{inner}</i></font>"),
+    patterns: List[Tuple[re.Pattern[str], callable]] = [
+        (
+            re.compile(r"<b><i>(.*?)</b></i>", re.DOTALL),
+            lambda m: f"<b><i>{m.group(1)}</i></b>",
+        ),
+        (
+            re.compile(r"<i><b>(.*?)</i></b>", re.DOTALL),
+            lambda m: f"<i><b>{m.group(1)}</b></i>",
+        ),
+        (
+            re.compile(r"<b>(.*?)<i>(.*?)</b>", re.DOTALL),
+            lambda m: f"<b>{m.group(1)}</b><i>{m.group(2)}</i>",
+        ),
+        (
+            re.compile(r"<i>(.*?)<b>(.*?)</i>", re.DOTALL),
+            lambda m: f"<i>{m.group(1)}</i><b>{m.group(2)}</b>",
+        ),
+        (
+            re.compile(r"<font([^>]*)><b>(.*?)</font></b>", re.DOTALL),
+            lambda m: f"<font{m.group(1)}><b>{m.group(2)}</b></font>",
+        ),
+        (
+            re.compile(r"<font([^>]*)><i>(.*?)</font></i>", re.DOTALL),
+            lambda m: f"<font{m.group(1)}><i>{m.group(2)}</i></font>",
+        ),
+        (
+            re.compile(r"<b><font([^>]*)>(.*?)</font></b>", re.DOTALL),
+            lambda m: f"<font{m.group(1)}><b>{m.group(2)}</b></font>",
+        ),
+        (
+            re.compile(r"<i><font([^>]*)>(.*?)</font></i>", re.DOTALL),
+            lambda m: f"<font{m.group(1)}><i>{m.group(2)}</i></font>",
+        ),
     ]
 
     current = text
     for _ in range(10):
         changed = False
-        for pattern, template in patterns:
-
-            def repl(match: re.Match[str]) -> str:
-                inner = match.group(len(match.groups()))
-                if "{inner_before}" in template:
-                    return template.format(
-                        inner_before=match.group(1), inner_after=match.group(2)
-                    )
-                if "{attrs}" in template:
-                    attrs = match.group(1)
-                    return template.format(attrs=attrs, inner=match.group(2))
-                return template.format(inner=inner)
-
-            new_text, count = pattern.subn(repl, current)
+        for pattern, replacer in patterns:
+            new_text, count = pattern.subn(replacer, current)
             if count:
                 changed = True
                 current = new_text
@@ -480,6 +494,8 @@ def _convert_inline_markdown(text: str) -> str:
     normalized = re.sub(r"<i>\s*</i>", "", normalized)
     normalized = re.sub(r"</i>\s*</i>", "</i>", normalized)
     normalized = re.sub(r"</b>\s*</b>", "</b>", normalized)
+    normalized = normalized.replace("</font></b>", "</b></font>")
+    normalized = normalized.replace("</font></i>", "</i></font>")
     normalized = _cleanup_markup_balance(normalized)
     return normalized
 
